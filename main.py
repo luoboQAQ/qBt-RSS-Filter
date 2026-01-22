@@ -1,5 +1,8 @@
 import feedparser
 import re
+import sys
+import logging
+from datetime import datetime
 from qbittorrentapi import Client
 
 import os
@@ -16,7 +19,7 @@ QBT_USER = os.getenv('QBT_USER', 'None')
 QBT_PASS = os.getenv('QBT_PASS', 'None')
 
 if RSS_URL == 'None' or QBT_HOST == 'None' or QBT_USER == 'None' or QBT_PASS == 'None':
-    print("请先配置 .env 文件")
+    print("请先配置 .env 文件") # 这里保持 print，因为日志还没配置
     exit()
 
 HISTORY_FILE = 'history.json'
@@ -61,22 +64,48 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(list(history), f, ensure_ascii=False, indent=2)
 
+def setup_logging():
+    """
+    配置日志：同时输出到文件和控制台
+    文件名为 qbt-rss-filter-YYYY-MM-DD.log
+    """
+    log_filename = f"qbt-rss-filter-{datetime.now().strftime('%Y-%m-%d')}.log"
+    
+    # 创建 Logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # 格式
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # 文件处理器
+    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
 def main():
+    setup_logging()
+    
     # 1. 连接 qBittorrent
     try:
         qbt_client = Client(host=QBT_HOST, port=QBT_PORT, username=QBT_USER, password=QBT_PASS)
         qbt_client.auth_log_in()
-        print("成功连接到 qBittorrent")
+        logging.info("成功连接到 qBittorrent")
     except Exception as e:
-        print(f"连接失败: {e}")
+        logging.error(f"连接失败: {e}")
         return
 
     # 2. 解析 RSS
-    print(f"正在读取 RSS: {RSS_URL}")
+    logging.info(f"正在读取 RSS: {RSS_URL}")
     feed = feedparser.parse(RSS_URL)
     
     history = load_history()
-    print(f"已加载历史记录: {len(history)} 条")
+    logging.info(f"已加载历史记录: {len(history)} 条")
 
     added_count = 0
 
@@ -85,7 +114,7 @@ def main():
         unique_id = entry.get('id', entry.link)
         
         if unique_id in history:
-            # print(f"跳过已存在: {entry.title}") 
+            # logging.info(f"跳过已存在: {entry.title}") 
             continue
         # 尝试从标题中提取大小信息 (格式如 [4.82 GiB])
         size_mb = parse_size_to_mb(entry.get('title', ''))
@@ -99,22 +128,22 @@ def main():
 
         if size_mb:
             if MIN_SIZE_MB <= size_mb <= MAX_SIZE_MB:
-                print(f"符合条件: [{size_mb:.2f} MB] {entry.title}")
+                logging.info(f"符合条件: [{size_mb:.2f} MB] {entry.title}")
                 
                 # 3. 推送到 qBittorrent
                 download_url = entry.enclosures[0].href
                 try:
                     qbt_client.torrents_add(urls=download_url, category=DOWNLOAD_CATEGORY, save_path=DOWNLOAD_PATH, content_layout='Original')
-                    print(f"推送成功: {entry.title}")
+                    logging.info(f"推送成功: {entry.title}")
                     added_count += 1
                     history.add(unique_id)
                     save_history(history)
                 except Exception as e:
-                    print(f"推送失败: {entry.title}, 错误: {e}")
+                    logging.error(f"推送失败: {entry.title}, 错误: {e}")
         else:
             pass
 
-    print(f"--- 任务完成，共添加了 {added_count} 个种子 ---")
+    logging.info(f"--- 任务完成，共添加了 {added_count} 个种子 ---")
 
 if __name__ == "__main__":
     main()
